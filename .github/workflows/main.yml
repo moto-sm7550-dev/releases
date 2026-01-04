@@ -1,0 +1,135 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create a GitHub Release?"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.gce_host }}
+          username: ${{ secrets.gce_user }}
+          key: ${{ secrets.ssh_key }}
+          script: |
+            mkdir actions-runner && cd actions-runner
+            VERSION=$(curl -s "https://api.github.com/repos/actions/runner/releases/latest" | grep -oP '"tag_name": "\K[^"]*' | sed 's/^v//')
+            curl -LSs https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-linux-x64-$VERSION.tar.gz | tar xz
+
+            TOKEN=$(curl -sX POST -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${{ secrets.gh_token }}" \
+              https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token | jq .token --raw-output)
+
+            ./config.sh --url https://github.com/${{ github.repository }} --token $TOKEN --unattended --replace
+            nohup ./run.sh > run.log 2>&1 &
+
+  build:
+    needs: setup
+    runs-on: self-hosted
+    env:
+      build_utils: https://raw.githubusercontent.com/${{ github.actor }}/android_build_utils/refs/heads/main
+
+    steps:
+      - name: Build Environment Setup
+        env:
+          RCLONE_CONF: ${{ secrets.rclone_conf }}
+          SSH_KEY: ${{ secrets.ssh_key }}
+        run: |
+          cd
+          curl -LSs ${{ env.build_utils }}/scripts/gcpsetup.sh | bash
+          echo "project=$HOME/android" >> $GITHUB_ENV
+
+      - name: Prepare Source
+        working-directory: ${{ env.project }}
+        run: |
+          rm -rf .repo/local_manifests
+          repo init --git-lfs -u https://github.com/LineageOS/android.git -b lineage-23.1
+          git clone https://github.com/${{ github.repository_owner }}/android_local_manifests.git .repo/local_manifests
+          curl -LSs ${{ env.build_utils }}/scripts/sync.sh | bash
+
+      - name: Compile Source
+        working-directory: ${{ env.project }}
+        env:
+          BB_KEY: ${{ secrets.bb_key }}
+          UTILS: ${{ env.build_utils }}
+        run: |
+          source <(curl -LSs ${{ env.build_utils }}/scripts/envsetup.sh)
+          breakfast eqe userdebug
+          cmka bacon
+
+      - name: Display Build Errors
+        if: failure()
+        working-directory: ${{ env.project }}
+        run: cat out/error.log
+
+      - name: Copy Build Artifacts
+        working-directory: ${{ env.project }}
+        run: |
+          artifacts="$HOME/files/${{ github.run_id }}"
+          echo "artifacts=$artifacts" >> $GITHUB_ENV
+
+          FILTERS=(
+            --max-depth 1
+            --filter "- *-ota.zip" --filter "+ *.zip"
+            --filter "+ *boot.img" --filter "+ recovery.img" --filter "+ super_empty.img"
+            --filter "- *"
+          )
+
+          rclone copy "${FILTERS[@]}" out/target/product/eqe/ "${artifacts}"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          compression-level: 0
+          path: ${{ env.artifacts }}/*
+
+  release:
+    needs: build
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@main
+        with:
+          path: artifacts
+
+      - name: Generate Release Tag
+        run: echo "release_tag=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: ${{ env.release_tag }}
+          name: LineageOS
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh_token }}
+
+  cleanup:
+    if: always()
+    needs: [setup, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove Runner
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.gce_host }}
+          username: ${{ secrets.gce_user }}
+          key: ${{ secrets.ssh_key }}
+          script: |
+            cd actions-runner
+
+            TOKEN=$(curl -sX POST -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${{ secrets.gh_token }}" \
+              https://api.github.com/repos/${{ github.repository }}/actions/runners/remove-token | jq .token --raw-output)
+
+            ./config.sh remove --token $TOKEN
+            cd .. && rm -rf actions-runner
