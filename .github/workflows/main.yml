@@ -119,6 +119,7 @@ jobs:
         with:
           tag_name: ${{ env.release_tag }}
           name: LineageOS
+          body: ""
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.gh_token }}
