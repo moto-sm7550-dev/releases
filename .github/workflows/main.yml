@@ -85,6 +85,16 @@ jobs:
 
           rclone copy "${FILTERS[@]}" out/target/product/eqe/ "${artifacts}"
 
+      - name: Display OTA Attributes
+        working-directory: ${{ env.project }}/out/target/product/eqe
+        run: |
+          echo "datetime: $(grep "ro.build.date.utc=" system/build.prop | cut -d'=' -f2)"
+          echo "filename: $(ls lineage-*.zip)"
+          echo "id: $(md5sum lineage-*.zip)"
+          echo "romtype: $(grep "ro.lineage.releasetype=" system/build.prop | cut -d'=' -f2)"
+          echo "size: $(stat -c%s lineage-*.zip)"
+          echo "version: $(grep "ro.lineage.build.version=" system/build.prop | cut -d'=' -f2)"
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
