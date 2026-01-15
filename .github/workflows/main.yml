@@ -120,6 +120,7 @@ jobs:
           tag_name: ${{ env.release_tag }}
           name: LineageOS
           files: artifacts/*
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.gh_token }}
 
