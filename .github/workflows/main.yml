@@ -54,6 +54,7 @@ jobs:
           repo init --git-lfs -u https://github.com/LineageOS/android.git -b lineage-23.1
           git clone https://github.com/${{ github.repository_owner }}/android_local_manifests.git .repo/local_manifests
           curl -LSs ${{ env.build_utils }}/scripts/sync.sh | bash
+          cd device/motorola/eqe && curl -LSs ${{ env.build_utils }}/patches/LineageOS.patch | git am
 
       - name: Compile Source
         working-directory: ${{ env.project }}
