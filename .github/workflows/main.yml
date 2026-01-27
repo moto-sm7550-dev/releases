@@ -112,13 +112,27 @@ jobs:
         with:
           path: artifacts
 
-      - name: Generate Release Tag
-        run: echo "release_tag=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+      - name: Generate Release Tag and Notes
+        run: |
+          echo "release_tag=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+          cat << EOF > release_notes.md
+          ## Build Information
+          - Date: $(date +'%d %B %Y')
+          - Type: Vanilla
+          - Variant: Userdebug
+
+          ## Links
+          - [Instructions](https://github.com/${{ github.repository }}/wiki/Installation)
+          - [Discussions](https://github.com/${{ github.repository }}/discussions)
+          - [Repositories](https://github.com/orgs/${{ github.repository_owner }}/repositories)
+          - [MindTheGapps](https://github.com/MindTheGapps/16.0.0-arm64/releases/latest)
+          EOF
 
       - name: Create Release
         uses: softprops/action-gh-release@master
         with:
           tag_name: ${{ env.release_tag }}
+          body_path: release_notes.md
           name: LineageOS
           files: artifacts/*
         env:
